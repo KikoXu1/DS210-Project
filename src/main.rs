@@ -1,4 +1,5 @@
-use std::collections::{VecDeque, HashMap};
+use std::collections::{BinaryHeap, HashMap};
+use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -11,48 +12,44 @@ struct Point {
 #[derive(Debug)]
 struct Graph {
     n: usize,
-    outedges: Vec<Vec<usize>>,
+    outedges: Vec<Vec<(usize, u32)>>,
 }
 
 type Vertex = usize;
+
 fn main() {
-    let points: Vec<Point> = read_points("roadNet-CA.txt");
+    let points: Vec<Point> = read_points("roadNet-CA.txt", 30000);
     let mut sorted_points = points.clone();
     sorted_points.sort_by_key(|p| p.x);
 
-    // Print sorted points
-    for point in &sorted_points {
-        println!("x: {}, z: {}", point.x, point.z);
-    }
-    
     // Populate graph data
     let mut graph = Graph {
         n: sorted_points.len(),
-        outedges: vec![Vec::new(); sorted_points.len()], // Initialize outedges with empty vectors
+        outedges: vec![Vec::new(); sorted_points.len()],
     };
 
     // Example: Populate outedges based on some adjacency information
     for i in 0..graph.n {
         // Assuming each vertex has an edge to its immediate neighbors (for demonstration purposes)
         if i > 0 {
-            graph.outedges[i].push(i - 1); // Add edge to the previous vertex
+            graph.outedges[i].push((i - 1, 1)); // Add edge to the previous vertex with distance 1
         }
         if i < graph.n - 1 {
-            graph.outedges[i].push(i + 1); // Add edge to the next vertex
+            graph.outedges[i].push((i + 1, 1)); // Add edge to the next vertex with distance 1
         }
     }
 
     // Compute distances using BFS and store in a HashMap
     let mut distances = HashMap::new();
     for i in 0..graph.n {
-        distances.insert(i, compute_distances(i, &graph));
+        distances.insert(i, dijkstra(i, &graph));
     }
 
     // Calculate statistics
     let mut all_distances = Vec::new();
     for i in 0..graph.n {
         let distances_from_i = &distances[&i];
-        all_distances.extend_from_slice(&distances_from_i[..i]);
+        all_distances.extend_from_slice(&distances_from_i.values().cloned().collect::<Vec<u32>>());
     }
 
     let total_distance: f64 = all_distances.iter().map(|&d| d as f64).sum();
@@ -68,14 +65,20 @@ fn main() {
     println!("Max distance: {}", max_distance);
     println!("Median distance: {}", median_distance);
     println!("Standard deviation: {}", standard_deviation);
+
+    // Compute distances using Dijkstra's algorithm and store in a HashMap
+    let distances_from_node_0 = dijkstra(0, &graph);
+    for (node, distance) in distances_from_node_0 {
+        println!("Shortest distance from node 0 to node {}: {}", node, distance);
+    }
 }
 
-fn read_points(filename: &str) -> Vec<Point> {
+fn read_points(filename: &str, sample_size: usize) -> Vec<Point> {
     let file = File::open(filename).expect("Failed to open file");
     let reader = BufReader::new(file);
     let mut points = Vec::new();
 
-    for line in reader.lines() {
+    for (index, line) in reader.lines().enumerate() {
         if let Ok(line) = line {
             let mut parts = line.trim().split_whitespace();
             if let (Some(x_str), Some(z_str)) = (parts.next(), parts.next()) {
@@ -84,38 +87,56 @@ fn read_points(filename: &str) -> Vec<Point> {
                 }
             }
         }
+        if index + 1 >= sample_size {
+            break;
+        }
     }
     points
 }
 
-fn compute_distances(start: Vertex, graph: &Graph) -> u32 {
-    let mut distance: Vec<Option<u32>> = vec![None; graph.n];
-    distance[start] = Some(0); // <= we know this distance
-    let mut queue: VecDeque<Vertex> = VecDeque::new();
-    queue.push_back(start);
-    while let Some(v) = queue.pop_front() {
-        // new unprocessed vertex
-        for &u in &graph.outedges[v] {
-            if distance[u].is_none() {
-                // consider all unprocessed neighbors of v
-                distance[u] = Some(distance[v].unwrap_or(0) + 1);
-                queue.push_back(u);
+fn dijkstra(start: Vertex, graph: &Graph) -> HashMap<Vertex, u32> {
+    let mut distance: HashMap<Vertex, u32> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+
+    distance.insert(start, 0);
+    heap.push(State { cost: 0, vertex: start });
+
+    while let Some(State { cost, vertex }) = heap.pop() {
+        if let Some(d) = distance.get(&vertex) {
+            if cost > *d {
+                continue;
+            }
+        }
+
+        for &(neighbor, edge_cost) in &graph.outedges[vertex] {
+            let new_cost = cost + edge_cost;
+
+            if !distance.contains_key(&neighbor) || new_cost < *distance.get(&neighbor).unwrap_or(&u32::MAX) {
+                distance.insert(neighbor, new_cost);
+                heap.push(State { cost: new_cost, vertex: neighbor });
             }
         }
     }
 
-    let mut total_distance = 0;
-    for &dist in &distance {
-        total_distance += dist.unwrap_or(0);
-    }
+    distance
+}
 
-    print!("vertex:distance");
-    for (v, &dist) in distance.iter().enumerate() {
-        print!("   {}:{}", v, dist.unwrap_or(0));
+#[derive(Debug, Eq, PartialEq)]
+struct State {
+    cost: u32,
+    vertex: Vertex,
+}
+
+impl Ord for State {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.cost.cmp(&self.cost)
     }
-    println!();
-    
-    total_distance
+}
+
+impl PartialOrd for State {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 fn median(data: &mut [u32]) -> f64 {
